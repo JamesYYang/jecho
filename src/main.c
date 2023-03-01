@@ -45,14 +45,16 @@ void tryParseUrl(char* req) {
   }
 }
 
-int main(int argc, const char* argv[]) {
+void error_die(const char *sc)
+{
+  perror(sc); 
+  exit(1);
+}
 
-  signal(SIGINT, sigHandler);
-
+void startServer() {
     // establish a socket.
   if ((serverFd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-    perror("In socket creation");
-    exit(EXIT_FAILURE);
+    error_die("In socket creation");
   }
 
   struct sockaddr_in address;
@@ -65,24 +67,33 @@ int main(int argc, const char* argv[]) {
 
   // assigns specified address to the socket.
   if (bind(serverFd, (struct sockaddr*) &address, sizeof(address)) < 0) {
-    perror("In bind");
-    exit(EXIT_FAILURE);
+    error_die("In bind");
   }
 
   // mark the socket as a passive socket.
   if (listen(serverFd, MAX_LISTEN_CONN) < 0) {
-    perror("In listen");
-    exit(EXIT_FAILURE);
+    error_die("In listen");
   }
+  
+}
+
+int main(int argc, const char* argv[]) {
+
+  signal(SIGINT, sigHandler);
+
+  startServer();
+
   printf("\nServer is now listening at port %d:\n\n", PORT);
+
+  struct sockaddr_in address;
+  int addrLen = sizeof(address);
 
   int acceptedSocket;
 
   while (1) {
 
     if ((acceptedSocket = accept(serverFd, (struct sockaddr*) &address, (socklen_t*) &addrLen)) < 0) {
-      perror("In accept");
-      exit(EXIT_FAILURE);
+      error_die("In accept");
     }
 
     char reqBuf[HTTP_REQ_BUF];
