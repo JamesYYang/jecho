@@ -6,12 +6,25 @@
 #include <unistd.h>
 #include <signal.h>
 #include <time.h>
-#include <uriparser/Uri.h>
+#include <sys/stat.h>
 
 #define MAX_LISTEN_CONN 128
 #define PORT 8080
 #define HTTP_REQ_BUF 1024
 #define HTTP_RES_BUF 1024
+
+#define SERVER_STRING "Server: jecho/0.0.1\r\n"
+
+void sigHandler(int signal);
+void wrapStrFromPTR(char* str, size_t len, const char* head, const char* tail);
+void error_die(const char *sc);
+void unimplemented(int client);
+void not_found(int client);
+void headers(int client);
+void cat(int client, FILE *resource);
+void serve_file(int client, const char *filename);
+void accept_request(int acceptedSocket);
+void startServer();
 
 int serverFd; 
 
@@ -26,19 +39,17 @@ void wrapStrFromPTR(char* str, size_t len, const char* head, const char* tail) {
   str[len - 1] = '\0';
 }
 
-void error_die(const char *sc)
-{
+void error_die(const char *sc){
   perror(sc); 
   exit(1);
 }
 
-void unimplemented(int client)
-{
+void unimplemented(int client){
  char buf[1024];
 
  sprintf(buf, "HTTP/1.0 501 Method Not Implemented\r\n");
  send(client, buf, strlen(buf), 0);
- sprintf(buf, "Server: jecho");
+ sprintf(buf, SERVER_STRING);
  send(client, buf, strlen(buf), 0);
  sprintf(buf, "Content-Type: text/html\r\n");
  send(client, buf, strlen(buf), 0);
@@ -52,6 +63,67 @@ void unimplemented(int client)
  send(client, buf, strlen(buf), 0);
  sprintf(buf, "</BODY></HTML>\r\n");
  send(client, buf, strlen(buf), 0);
+}
+
+void not_found(int client){
+  char buf[1024];
+
+  sprintf(buf, "HTTP/1.0 404 NOT FOUND\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, SERVER_STRING);
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "Content-Type: text/html\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "<HTML><TITLE>Not Found</TITLE>\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "<BODY><P>The server could not fulfill\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "your request because the resource specified\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "is unavailable or nonexistent.\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "</BODY></HTML>\r\n");
+  send(client, buf, strlen(buf), 0);
+}
+
+void headers(int client){
+  char buf[1024];
+
+  strcpy(buf, "HTTP/1.0 200 OK\r\n");
+  send(client, buf, strlen(buf), 0);
+  strcpy(buf, SERVER_STRING);
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "Content-Type: text/html\r\n");
+  send(client, buf, strlen(buf), 0);
+  strcpy(buf, "\r\n");
+  send(client, buf, strlen(buf), 0);
+}
+
+void cat(int client, FILE *resource){
+  char buf[1024];
+
+  fgets(buf, sizeof(buf), resource);
+  while (!feof(resource))
+  {
+    send(client, buf, strlen(buf), 0);
+    fgets(buf, sizeof(buf), resource);
+  }
+}
+
+void serve_file(int client, const char *filename){
+  FILE *resource = NULL;
+
+  resource = fopen(filename, "r");
+  if (resource == NULL)
+    not_found(client);
+  else{
+    headers(client);
+    cat(client, resource);
+  }
+
+  fclose(resource);
 }
 
 void accept_request(int acceptedSocket){
@@ -80,17 +152,27 @@ void accept_request(int acceptedSocket){
   wrapStrFromPTR(strUri, uriLen, uriHead, uriTail);
   printf("raw url: %s\n", strUri);
 
-  char resBuf[HTTP_RES_BUF];
+  char path[HTTP_REQ_BUF];
+  sprintf(path, "example%s", strUri);
+  
 
-  time_t currTime = time(NULL);
-  struct tm* tm = localtime(&currTime);
+  if (path[strlen(path) - 1] == '/')
+    strcat(path, "index.html");
 
-  sprintf(resBuf, "HTTP/1.1 200 OK\r\n"
-                  "Content-type: text/plain\r\n\r\n"
-                  "Hello, you are connected, this is welcome msg from Jecho\r\n"
-                  "current time: %s", asctime(tm));
+  struct stat st;
 
-  write(acceptedSocket, resBuf, strlen(resBuf));
+  if (stat(path, &st) == -1) {
+    not_found(acceptedSocket);
+    close(acceptedSocket);
+    return;
+  }
+
+  if ((st.st_mode & S_IFMT) == S_IFDIR)  
+    strcat(path, "/index.html");
+
+  printf("find path: %s\n", path);
+
+  serve_file(acceptedSocket, path);
 
   close(acceptedSocket);
 }
@@ -135,13 +217,11 @@ int main(int argc, const char* argv[]) {
   int acceptedSocket;
 
   while (1) {
-
     if ((acceptedSocket = accept(serverFd, (struct sockaddr*) &address, (socklen_t*) &addrLen)) < 0) {
       error_die("In accept");
     }
-
+    
     accept_request(acceptedSocket);
-
   }
 
   return EXIT_SUCCESS;

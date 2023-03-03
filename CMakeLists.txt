@@ -7,8 +7,8 @@ include_directories(. /usr/local/include)
 
 aux_source_directory(./src DIR_SRCS)
 
-find_package(uriparser 0.9.6 CONFIG REQUIRED char)
+file(COPY example DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(${TARGET_FILE} ${DIR_SRCS})
 
-target_link_libraries(jecho PUBLIC uriparser::uriparser)
+# target_link_libraries(jecho PUBLIC uriparser::uriparser)
