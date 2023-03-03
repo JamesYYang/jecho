@@ -136,7 +136,8 @@ void accept_request(int acceptedSocket){
   char reqBuf[HTTP_REQ_BUF];
   bzero(reqBuf, HTTP_REQ_BUF); 
 
-  const size_t receivedBytes = read(acceptedSocket, reqBuf, HTTP_REQ_BUF);
+  // const size_t receivedBytes = read(acceptedSocket, reqBuf, HTTP_REQ_BUF);
+  read(acceptedSocket, reqBuf, HTTP_REQ_BUF);
 
   const char* uriHead = strchr(reqBuf, ' ') + 1;
   const char* uriTail = strchr(uriHead, ' ');
