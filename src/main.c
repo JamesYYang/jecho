@@ -91,9 +91,14 @@ void not_found(int client){
 void headers(int client){
   char buf[1024];
 
+  time_t currTime = time(NULL);
+  struct tm* tm = gmtime(&currTime);
+
   strcpy(buf, "HTTP/1.0 200 OK\r\n");
   send(client, buf, strlen(buf), 0);
   strcpy(buf, SERVER_STRING);
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "Date: %s", asctime(tm));
   send(client, buf, strlen(buf), 0);
   sprintf(buf, "Content-Type: text/html\r\n");
   send(client, buf, strlen(buf), 0);
