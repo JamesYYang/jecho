@@ -10,7 +10,3 @@ make
 make run
 
 ```
-
-## Reference
-
-[CMake 简明教程](http://www.wang-hj.cn/?p=2629)
