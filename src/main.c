@@ -17,20 +17,21 @@
 
 void sigHandler(int signal);
 void wrapStrFromPTR(char* str, size_t len, const char* head, const char* tail);
-void error_die(const char *sc);
+void error_die(const char* sc);
 void unimplemented(int client);
 void not_found(int client);
 void headers(int client);
-void cat(int client, FILE *resource);
-void serve_file(int client, const char *filename);
+void cat(int client, FILE* resource);
+void serve_file(int client, const char* filename);
 void accept_request(int acceptedSocket);
 void startServer();
 
-int serverFd; 
+int serverFd;
 
-void sigHandler(int signal) {  
+void sigHandler(int signal) {
   printf("server closed: \n");
   close(serverFd);
+  exit(EXIT_SUCCESS);
 }
 
 void wrapStrFromPTR(char* str, size_t len, const char* head, const char* tail) {
@@ -39,33 +40,33 @@ void wrapStrFromPTR(char* str, size_t len, const char* head, const char* tail) {
   str[len - 1] = '\0';
 }
 
-void error_die(const char *sc){
-  perror(sc); 
+void error_die(const char* sc) {
+  perror(sc);
   exit(1);
 }
 
-void unimplemented(int client){
- char buf[1024];
+void unimplemented(int client) {
+  char buf[1024];
 
- sprintf(buf, "HTTP/1.0 501 Method Not Implemented\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, SERVER_STRING);
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "Content-Type: text/html\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "<HTML><HEAD><TITLE>Method Not Implemented\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "</TITLE></HEAD>\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "<BODY><P>HTTP request method not supported.\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "</BODY></HTML>\r\n");
- send(client, buf, strlen(buf), 0);
+  sprintf(buf, "HTTP/1.0 501 Method Not Implemented\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, SERVER_STRING);
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "Content-Type: text/html\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "<HTML><HEAD><TITLE>Method Not Implemented\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "</TITLE></HEAD>\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "<BODY><P>HTTP request method not supported.\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "</BODY></HTML>\r\n");
+  send(client, buf, strlen(buf), 0);
 }
 
-void not_found(int client){
+void not_found(int client) {
   char buf[1024];
 
   sprintf(buf, "HTTP/1.0 404 NOT FOUND\r\n");
@@ -88,7 +89,7 @@ void not_found(int client){
   send(client, buf, strlen(buf), 0);
 }
 
-void headers(int client){
+void headers(int client) {
   char buf[1024];
 
   time_t currTime = time(NULL);
@@ -106,7 +107,7 @@ void headers(int client){
   send(client, buf, strlen(buf), 0);
 }
 
-void cat(int client, FILE *resource){
+void cat(int client, FILE* resource) {
   char buf[1024];
 
   fgets(buf, sizeof(buf), resource);
@@ -117,13 +118,13 @@ void cat(int client, FILE *resource){
   }
 }
 
-void serve_file(int client, const char *filename){
-  FILE *resource = NULL;
+void serve_file(int client, const char* filename) {
+  FILE* resource = NULL;
 
   resource = fopen(filename, "r");
   if (resource == NULL)
     not_found(client);
-  else{
+  else {
     headers(client);
     cat(client, resource);
   }
@@ -131,10 +132,10 @@ void serve_file(int client, const char *filename){
   fclose(resource);
 }
 
-void accept_request(int acceptedSocket){
+void accept_request(int acceptedSocket) {
 
   char reqBuf[HTTP_REQ_BUF];
-  bzero(reqBuf, HTTP_REQ_BUF); 
+  bzero(reqBuf, HTTP_REQ_BUF);
 
   // const size_t receivedBytes = read(acceptedSocket, reqBuf, HTTP_REQ_BUF);
   read(acceptedSocket, reqBuf, HTTP_REQ_BUF);
@@ -160,7 +161,7 @@ void accept_request(int acceptedSocket){
 
   char path[HTTP_REQ_BUF];
   sprintf(path, "example%s", strUri);
-  
+
 
   if (path[strlen(path) - 1] == '/')
     strcat(path, "index.html");
@@ -173,7 +174,7 @@ void accept_request(int acceptedSocket){
     return;
   }
 
-  if ((st.st_mode & S_IFMT) == S_IFDIR)  
+  if ((st.st_mode & S_IFMT) == S_IFDIR)
     strcat(path, "/index.html");
 
   printf("find path: %s\n", path);
@@ -184,7 +185,7 @@ void accept_request(int acceptedSocket){
 }
 
 void startServer() {
-    // establish a socket.
+  // establish a socket.
   if ((serverFd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
     error_die("In socket creation");
   }
@@ -192,13 +193,13 @@ void startServer() {
   struct sockaddr_in address;
   int addrLen = sizeof(address);
 
-  bzero(&address, addrLen); 
+  bzero(&address, addrLen);
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = INADDR_ANY;  // -> 0.0.0.0.
   address.sin_port = htons(PORT);
 
   // assigns specified address to the socket.
-  if (bind(serverFd, (struct sockaddr*) &address, sizeof(address)) < 0) {
+  if (bind(serverFd, (struct sockaddr*)&address, sizeof(address)) < 0) {
     error_die("In bind");
   }
 
@@ -206,7 +207,7 @@ void startServer() {
   if (listen(serverFd, MAX_LISTEN_CONN) < 0) {
     error_die("In listen");
   }
-  
+
 }
 
 int main(int argc, const char* argv[]) {
@@ -223,10 +224,10 @@ int main(int argc, const char* argv[]) {
   int acceptedSocket;
 
   while (1) {
-    if ((acceptedSocket = accept(serverFd, (struct sockaddr*) &address, (socklen_t*) &addrLen)) < 0) {
+    if ((acceptedSocket = accept(serverFd, (struct sockaddr*)&address, (socklen_t*)&addrLen)) < 0) {
       error_die("In accept");
     }
-    
+
     accept_request(acceptedSocket);
   }
 
