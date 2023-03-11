@@ -17,14 +17,17 @@
 
 void sigHandler(int signal);
 void read_til_crnl(FILE *fp);
-void wrapStrFromPTR(char *str, size_t len, const char *head, const char *tail);
 void error_die(const char *sc);
 void unimplemented(int client);
-void not_found(int client);
-void headers(int client);
+int not_exist(char *f);
+int isadir(char *f);
+void do_ls(char *dir, int fd);
+void not_found(char *item, int fd);
+void header(FILE *fp, char *content_type);
 void cat(int client, FILE *resource);
-void serve_file(int client, const char *filename);
-void accept_request(int acceptedSocket);
+char *file_type(char *f);
+void serve_file(int client, char *filename);
+void process_request(char *request, int acceptedSocket);
 void startServer();
 
 int serverFd;
@@ -40,14 +43,9 @@ void read_til_crnl(FILE *fp)
 {
     char buf[BUFSIZ];
     while (fgets(buf, BUFSIZ, fp) != NULL && strcmp(buf, "\r\n") != 0)
-        ;
-}
-
-void wrapStrFromPTR(char *str, size_t len, const char *head, const char *tail)
-{
-    for (size_t i = 0; head != tail; head++)
-        str[i++] = *head;
-    str[len - 1] = '\0';
+    {
+        printf("%s", buf);
+    }
 }
 
 void error_die(const char *sc)
@@ -56,69 +54,65 @@ void error_die(const char *sc)
     exit(1);
 }
 
-void unimplemented(int client)
+void unimplemented(int fd)
 {
-    char buf[1024];
+    FILE *fp = fdopen(fd, "w");
 
-    sprintf(buf, "HTTP/1.0 501 Method Not Implemented\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, SERVER_STRING);
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "Content-Type: text/html\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "<HTML><HEAD><TITLE>Method Not Implemented\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "</TITLE></HEAD>\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "<BODY><P>HTTP request method not supported.\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "</BODY></HTML>\r\n");
-    send(client, buf, strlen(buf), 0);
+    fprintf(fp, "HTTP/1.0 501 Not Implemented\r\n");
+    fprintf(fp, "Content-type: text/plain\r\n");
+    fprintf(fp, "\r\n");
+
+    fprintf(fp, "That command is not yet implemented\r\n");
+    fclose(fp);
 }
 
-void not_found(int client)
+int not_exist(char *f)
 {
-    char buf[1024];
-
-    sprintf(buf, "HTTP/1.0 404 NOT FOUND\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, SERVER_STRING);
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "Content-Type: text/html\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "<HTML><TITLE>Not Found</TITLE>\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "<BODY><P>The server could not fulfill\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "your request because the resource specified\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "is unavailable or nonexistent.\r\n");
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "</BODY></HTML>\r\n");
-    send(client, buf, strlen(buf), 0);
+    struct stat info;
+    return (stat(f, &info) == -1);
 }
 
-void headers(int client)
+int isadir(char *f)
 {
-    char buf[1024];
+    struct stat info;
+    return (stat(f, &info) != -1 && S_ISDIR(info.st_mode));
+}
 
-    time_t currTime = time(NULL);
-    struct tm *tm = gmtime(&currTime);
+void do_ls(char *dir, int fd)
+{
+    FILE *fp;
 
-    strcpy(buf, "HTTP/1.0 200 OK\r\n");
-    send(client, buf, strlen(buf), 0);
-    strcpy(buf, SERVER_STRING);
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "Date: %s", asctime(tm));
-    send(client, buf, strlen(buf), 0);
-    sprintf(buf, "Content-Type: text/html\r\n");
-    send(client, buf, strlen(buf), 0);
-    strcpy(buf, "\r\n");
-    send(client, buf, strlen(buf), 0);
+    fp = fdopen(fd, "w");
+    header(fp, "text/plain");
+    fprintf(fp, "\r\n");
+    fflush(fp);
+
+    dup2(fd, 1);
+    dup2(fd, 2);
+    close(fd);
+    execlp("ls", "ls", "-l", dir, NULL);
+
+    // error_die(dir);
+}
+
+void not_found(char *item, int fd)
+{
+    FILE *fp = fdopen(fd, "w");
+
+    fprintf(fp, "HTTP/1.0 404 Not Found\r\n");
+    fprintf(fp, "Content-type: text/plain\r\n");
+    fprintf(fp, "\r\n");
+
+    fprintf(fp, "The item you requested: %s\r\nis not found\r\n", item);
+    fclose(fp);
+}
+
+void header(FILE *fp, char *content_type)
+{
+    fprintf(fp, "HTTP/1.0 200 OK\r\n");
+    if (content_type)
+        fprintf(fp, "Content-type: %s\r\n", content_type);
+    fprintf(fp, "Server: jecho/0.0.1\r\n");
 }
 
 void cat(int client, FILE *resource)
@@ -133,95 +127,63 @@ void cat(int client, FILE *resource)
     }
 }
 
-void serve_file(int client, const char *filename)
+char *file_type(char *f)
+/* returns 'extension' of file */
 {
-    FILE *resource = NULL;
-
-    resource = fopen(filename, "r");
-    if (resource == NULL)
-        not_found(client);
-    else
-    {
-        headers(client);
-        cat(client, resource);
-    }
-
-    fclose(resource);
+    char *cp;
+    if ((cp = strrchr(f, '.')) != NULL)
+        return cp + 1;
+    return "";
 }
 
-void accept_request(int acceptedSocket)
+void serve_file(int client, char *filename)
 {
+    char *extension = file_type(filename);
+    char *content = "text/plain";
+    FILE *fpsock, *fpfile;
+    int c;
 
-    char reqBuf[HTTP_REQ_BUF];
-    bzero(reqBuf, HTTP_REQ_BUF);
+    if (strcmp(extension, "html") == 0)
+        content = "text/html";
+    else if (strcmp(extension, "gif") == 0)
+        content = "image/gif";
+    else if (strcmp(extension, "jpg") == 0)
+        content = "image/jpeg";
+    else if (strcmp(extension, "jpeg") == 0)
+        content = "image/jpeg";
 
-    /*
-    read(acceptedSocket, reqBuf, HTTP_REQ_BUF);
+    fpsock = fdopen(client, "w");
+    fpfile = fopen(filename, "r");
+    if (fpsock != NULL && fpfile != NULL)
+    {
+        header(fpsock, content);
+        fprintf(fpsock, "\r\n");
+        while ((c = getc(fpfile)) != EOF)
+            putc(c, fpsock);
+        fclose(fpfile);
+        fclose(fpsock);
+    }
+    // exit(0);
+}
 
-    const char *uriHead = strchr(reqBuf, ' ') + 1;
-    const char *uriTail = strchr(uriHead, ' ');
-    size_t methodLen = uriHead - reqBuf;
-    char strMethod[methodLen];
-    wrapStrFromPTR(strMethod, methodLen, reqBuf, uriHead);
-    printf("http method: %s\n", strMethod);
-    */
-
-    FILE *fpin;
-    fpin = fdopen(acceptedSocket, "r");
-
-    /* read request */
-    fgets(reqBuf, BUFSIZ, fpin);
-    printf("got a call: request = %s", reqBuf);
-    read_til_crnl(fpin);
-
+void process_request(char *request, int acceptedSocket)
+{
     char cmd[BUFSIZ], arg[BUFSIZ];
 
     strcpy(arg, "./"); /* precede args with ./ */
-    if (sscanf(reqBuf, "%s%s", cmd, arg + 2) != 2)
+    if (sscanf(request, "%s%s", cmd, arg + 2) != 2)
         return;
 
     printf("cmd: %s, url: %s\n", cmd, arg);
 
-    char path[HTTP_REQ_BUF];
-    /*
-        if (strcasecmp(strMethod, "GET"))
-        {
-            unimplemented(acceptedSocket);
-            close(acceptedSocket);
-            return;
-        }
-
-        size_t uriLen = uriTail - uriHead + 1;
-        char strUri[uriLen];
-        wrapStrFromPTR(strUri, uriLen, uriHead, uriTail);
-        printf("raw url: %s\n", strUri);
-
-        char path[HTTP_REQ_BUF];
-        sprintf(path, "example%s", strUri);
-
-        if (path[strlen(path) - 1] == '/')
-            strcat(path, "index.html");
-
-        struct stat st;
-
-        if (stat(path, &st) == -1)
-        {
-            not_found(acceptedSocket);
-            close(acceptedSocket);
-            return;
-        }
-
-        if ((st.st_mode & S_IFMT) == S_IFDIR)
-            strcat(path, "/index.html");
-
-        printf("find path: %s\n", path);
-    */
-
-    strcpy(path, "/index.html");
-
-    serve_file(acceptedSocket, path);
-
-    close(acceptedSocket);
+    if (strcmp(cmd, "GET") != 0)
+        unimplemented(acceptedSocket);
+    else if (not_exist(arg))
+        not_found(arg, acceptedSocket);
+    else if (isadir(arg))
+        do_ls(arg, acceptedSocket);
+    else
+        serve_file(acceptedSocket, arg);
 }
 
 void startServer()
@@ -255,18 +217,13 @@ void startServer()
 
 int main(int argc, const char *argv[])
 {
-
     signal(SIGINT, sigHandler);
-
     startServer();
-
     printf("\nServer is now listening at port %d:\n\n", PORT);
 
     struct sockaddr_in address;
     int addrLen = sizeof(address);
-
     int acceptedSocket;
-
     while (1)
     {
         if ((acceptedSocket = accept(serverFd, (struct sockaddr *)&address, (socklen_t *)&addrLen)) < 0)
@@ -274,7 +231,17 @@ int main(int argc, const char *argv[])
             error_die("In accept");
         }
 
-        accept_request(acceptedSocket);
+        FILE *fpin;
+        char request[BUFSIZ];
+        fpin = fdopen(acceptedSocket, "r");
+
+        /* read request */
+        fgets(request, BUFSIZ, fpin);
+        printf("got a call: request = %s", request);
+        read_til_crnl(fpin);
+
+        process_request(request, acceptedSocket);
+        fclose(fpin);
     }
 
     return EXIT_SUCCESS;
