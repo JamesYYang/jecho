@@ -7,6 +7,8 @@
 #include <signal.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <time.h>
+#include <sys/wait.h>
 
 #define MAX_LISTEN_CONN 128
 #define PORT 8080
@@ -16,6 +18,7 @@
 #define SERVER_STRING "Server: jecho/0.0.1\r\n"
 
 void sigHandler(int signal);
+void child_waiter(int signal);
 void read_til_crnl(FILE *fp);
 void error_die(const char *sc);
 void unimplemented(int client);
@@ -24,7 +27,6 @@ int isadir(char *f);
 void do_ls(char *dir, int fd);
 void not_found(char *item, int fd);
 void header(FILE *fp, char *content_type);
-void cat(int client, FILE *resource);
 char *file_type(char *f);
 void serve_file(int client, char *filename);
 void process_request(char *request, int acceptedSocket);
@@ -37,6 +39,12 @@ void sigHandler(int signal)
     printf("server closed: \n");
     close(serverFd);
     exit(EXIT_SUCCESS);
+}
+
+void child_waiter(int signal)
+{
+    while (waitpid(-1, NULL, WNOHANG) > 0)
+        ;
 }
 
 void read_til_crnl(FILE *fp)
@@ -60,6 +68,7 @@ void unimplemented(int fd)
 
     fprintf(fp, "HTTP/1.0 501 Not Implemented\r\n");
     fprintf(fp, "Content-type: text/plain\r\n");
+    fprintf(fp, SERVER_STRING);
     fprintf(fp, "\r\n");
 
     fprintf(fp, "That command is not yet implemented\r\n");
@@ -91,8 +100,6 @@ void do_ls(char *dir, int fd)
     dup2(fd, 2);
     close(fd);
     execlp("ls", "ls", "-l", dir, NULL);
-
-    // error_die(dir);
 }
 
 void not_found(char *item, int fd)
@@ -101,6 +108,7 @@ void not_found(char *item, int fd)
 
     fprintf(fp, "HTTP/1.0 404 Not Found\r\n");
     fprintf(fp, "Content-type: text/plain\r\n");
+    fprintf(fp, SERVER_STRING);
     fprintf(fp, "\r\n");
 
     fprintf(fp, "The item you requested: %s\r\nis not found\r\n", item);
@@ -112,19 +120,10 @@ void header(FILE *fp, char *content_type)
     fprintf(fp, "HTTP/1.0 200 OK\r\n");
     if (content_type)
         fprintf(fp, "Content-type: %s\r\n", content_type);
-    fprintf(fp, "Server: jecho/0.0.1\r\n");
-}
-
-void cat(int client, FILE *resource)
-{
-    char buf[1024];
-
-    fgets(buf, sizeof(buf), resource);
-    while (!feof(resource))
-    {
-        send(client, buf, strlen(buf), 0);
-        fgets(buf, sizeof(buf), resource);
-    }
+    fprintf(fp, SERVER_STRING);
+    time_t thetime;
+    thetime = time(NULL);
+    fprintf(fp, "Date: %s", ctime(&thetime));
 }
 
 char *file_type(char *f)
@@ -163,18 +162,21 @@ void serve_file(int client, char *filename)
         fclose(fpfile);
         fclose(fpsock);
     }
-    // exit(0);
+    exit(0);
 }
 
 void process_request(char *request, int acceptedSocket)
 {
     char cmd[BUFSIZ], arg[BUFSIZ];
 
+    if (fork() != 0)
+        return;
+
     strcpy(arg, "./"); /* precede args with ./ */
     if (sscanf(request, "%s%s", cmd, arg + 2) != 2)
         return;
 
-    printf("cmd: %s, url: %s\n", cmd, arg);
+    printf("cmd: %s, url: %s\n\n", cmd, arg);
 
     if (strcmp(cmd, "GET") != 0)
         unimplemented(acceptedSocket);
@@ -218,6 +220,7 @@ void startServer()
 int main(int argc, const char *argv[])
 {
     signal(SIGINT, sigHandler);
+    signal(SIGCHLD, child_waiter);
     startServer();
     printf("\nServer is now listening at port %d:\n\n", PORT);
 
@@ -237,7 +240,6 @@ int main(int argc, const char *argv[])
 
         /* read request */
         fgets(request, BUFSIZ, fpin);
-        printf("got a call: request = %s", request);
         read_til_crnl(fpin);
 
         process_request(request, acceptedSocket);
