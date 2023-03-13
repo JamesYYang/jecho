@@ -10,6 +10,7 @@
 #include <time.h>
 #include <sys/wait.h>
 #include <threads.h>
+#include <dirent.h>
 
 #define MAX_LISTEN_CONN 128
 #define PORT 8080
@@ -19,7 +20,6 @@
 #define SERVER_STRING "Server: jecho/0.0.1\r\n"
 
 void sigHandler(int signal);
-// void child_waiter(int signal);
 void read_til_crnl(FILE *fp);
 void error_die(const char *sc);
 void unimplemented(int client);
@@ -41,12 +41,6 @@ void sigHandler(int signal)
     close(serverFd);
     exit(EXIT_SUCCESS);
 }
-
-// void child_waiter(int signal)
-// {
-//     while (waitpid(-1, NULL, WNOHANG) > 0)
-//         ;
-// }
 
 void read_til_crnl(FILE *fp)
 {
@@ -93,14 +87,37 @@ void do_ls(char *dir, int fd)
     FILE *fp;
 
     fp = fdopen(fd, "w");
-    header(fp, "text/plain");
+    header(fp, "text/html");
     fprintf(fp, "\r\n");
     fflush(fp);
 
-    dup2(fd, 1);
-    dup2(fd, 2);
-    close(fd);
-    execlp("ls", "ls", "-l", dir, NULL);
+    DIR *dir_ptr;           /* the directory */
+    struct dirent *direntp; /* each entry	 */
+
+    if ((dir_ptr = opendir(dir)) == NULL)
+        fprintf(fp, "cannot open %s\n", dir);
+    else
+    {
+
+        while ((direntp = readdir(dir_ptr)) != NULL)
+        {
+            if (strcmp(direntp->d_name, ".") == 0 || strcmp(direntp->d_name, "..") == 0)
+                continue;
+
+            if (dir[strlen(dir) - 1] == '/')
+            {
+                fprintf(fp, "<a href='%s%s'>%s</a><br />", dir + 1, direntp->d_name, direntp->d_name);
+            }
+            else
+            {
+                fprintf(fp, "<a href='%s/%s'>%s</a><br />", dir + 1, direntp->d_name, direntp->d_name);
+            }
+        }
+
+        closedir(dir_ptr);
+    }
+
+    fclose(fp);
 }
 
 void not_found(char *item, int fd)
@@ -182,11 +199,8 @@ int process_request(void *fdptr)
 
     char cmd[BUFSIZ], arg[BUFSIZ];
 
-    // if (fork() != 0)
-    //     return;
-
-    strcpy(arg, "./"); /* precede args with ./ */
-    if (sscanf(request, "%s%s", cmd, arg + 2) != 2)
+    strcpy(arg, "."); /* precede args with ./ */
+    if (sscanf(request, "%s%s", cmd, arg + 1) != 2)
         return thrd_success;
 
     printf("cmd: %s, url: %s\n\n", cmd, arg);
@@ -236,7 +250,6 @@ void startServer()
 int main(int argc, const char *argv[])
 {
     signal(SIGINT, sigHandler);
-    // signal(SIGCHLD, child_waiter);
     startServer();
     printf("\nServer is now listening at port %d:\n\n", PORT);
 
