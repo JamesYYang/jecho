@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <sys/wait.h>
+#include <threads.h>
 
 #define MAX_LISTEN_CONN 128
 #define PORT 8080
@@ -18,7 +19,7 @@
 #define SERVER_STRING "Server: jecho/0.0.1\r\n"
 
 void sigHandler(int signal);
-void child_waiter(int signal);
+// void child_waiter(int signal);
 void read_til_crnl(FILE *fp);
 void error_die(const char *sc);
 void unimplemented(int client);
@@ -29,7 +30,7 @@ void not_found(char *item, int fd);
 void header(FILE *fp, char *content_type);
 char *file_type(char *f);
 void serve_file(int client, char *filename);
-void process_request(char *request, int acceptedSocket);
+int process_request(void *fdptr);
 void startServer();
 
 int serverFd;
@@ -41,11 +42,11 @@ void sigHandler(int signal)
     exit(EXIT_SUCCESS);
 }
 
-void child_waiter(int signal)
-{
-    while (waitpid(-1, NULL, WNOHANG) > 0)
-        ;
-}
+// void child_waiter(int signal)
+// {
+//     while (waitpid(-1, NULL, WNOHANG) > 0)
+//         ;
+// }
 
 void read_til_crnl(FILE *fp)
 {
@@ -162,30 +163,45 @@ void serve_file(int client, char *filename)
         fclose(fpfile);
         fclose(fpsock);
     }
-    exit(0);
+    // exit(0);
 }
 
-void process_request(char *request, int acceptedSocket)
+int process_request(void *fdptr)
 {
+    int fd;
+    fd = *(int *)fdptr;
+    free(fdptr);
+
+    FILE *fpin;
+    char request[BUFSIZ];
+    fpin = fdopen(fd, "r");
+
+    /* read request */
+    fgets(request, BUFSIZ, fpin);
+    read_til_crnl(fpin);
+
     char cmd[BUFSIZ], arg[BUFSIZ];
 
-    if (fork() != 0)
-        return;
+    // if (fork() != 0)
+    //     return;
 
     strcpy(arg, "./"); /* precede args with ./ */
     if (sscanf(request, "%s%s", cmd, arg + 2) != 2)
-        return;
+        return thrd_success;
 
     printf("cmd: %s, url: %s\n\n", cmd, arg);
 
     if (strcmp(cmd, "GET") != 0)
-        unimplemented(acceptedSocket);
+        unimplemented(fd);
     else if (not_exist(arg))
-        not_found(arg, acceptedSocket);
+        not_found(arg, fd);
     else if (isadir(arg))
-        do_ls(arg, acceptedSocket);
+        do_ls(arg, fd);
     else
-        serve_file(acceptedSocket, arg);
+        serve_file(fd, arg);
+
+    fclose(fpin);
+    return thrd_success;
 }
 
 void startServer()
@@ -220,13 +236,17 @@ void startServer()
 int main(int argc, const char *argv[])
 {
     signal(SIGINT, sigHandler);
-    signal(SIGCHLD, child_waiter);
+    // signal(SIGCHLD, child_waiter);
     startServer();
     printf("\nServer is now listening at port %d:\n\n", PORT);
 
     struct sockaddr_in address;
     int addrLen = sizeof(address);
     int acceptedSocket;
+
+    thrd_t thread;
+    int *fdptr;
+
     while (1)
     {
         if ((acceptedSocket = accept(serverFd, (struct sockaddr *)&address, (socklen_t *)&addrLen)) < 0)
@@ -234,16 +254,11 @@ int main(int argc, const char *argv[])
             error_die("In accept");
         }
 
-        FILE *fpin;
-        char request[BUFSIZ];
-        fpin = fdopen(acceptedSocket, "r");
+        fdptr = malloc(sizeof(int));
+        *fdptr = acceptedSocket;
 
-        /* read request */
-        fgets(request, BUFSIZ, fpin);
-        read_til_crnl(fpin);
-
-        process_request(request, acceptedSocket);
-        fclose(fpin);
+        thrd_create(&thread, process_request, fdptr);
+        thrd_detach(thread);
     }
 
     return EXIT_SUCCESS;
