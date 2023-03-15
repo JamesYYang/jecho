@@ -11,15 +11,21 @@
 #include <sys/wait.h>
 #include <threads.h>
 #include <dirent.h>
+#include <sys/sysinfo.h>
+#include <sys/epoll.h>
+#include <fcntl.h>
 
 #define MAX_LISTEN_CONN 128
 #define PORT 8080
 #define HTTP_REQ_BUF 1024
 #define HTTP_RES_BUF 1024
+#define MAX_EVENT_NUM 1024
+#define INFTIM -1
 
 #define SERVER_STRING "Server: jecho/0.0.1\r\n"
 
 void sigHandler(int signal);
+void handle_subprocess_exit(int signal);
 void read_til_crnl(FILE *fp);
 void error_die(const char *sc);
 void unimplemented(int client);
@@ -32,6 +38,7 @@ char *file_type(char *f);
 void serve_file(int client, char *filename);
 int process_request(void *fdptr);
 void startServer();
+void process();
 
 int serverFd;
 
@@ -42,12 +49,20 @@ void sigHandler(int signal)
     exit(EXIT_SUCCESS);
 }
 
+void handle_subprocess_exit(int signal)
+{
+    printf("clean subprocess.\n");
+    int status;
+    while (waitpid(-1, &status, WNOHANG) > 0)
+        ;
+}
+
 void read_til_crnl(FILE *fp)
 {
     char buf[BUFSIZ];
     while (fgets(buf, BUFSIZ, fp) != NULL && strcmp(buf, "\r\n") != 0)
     {
-        printf("%s", buf);
+        // printf("%s", buf);
     }
 }
 
@@ -203,7 +218,7 @@ int process_request(void *fdptr)
     if (sscanf(request, "%s%s", cmd, arg + 1) != 2)
         return thrd_success;
 
-    printf("cmd: %s, url: %s\n\n", cmd, arg);
+    printf("[%d]cmd: %s, url: %s\n\n", getpid(), cmd, arg);
 
     if (strcmp(cmd, "GET") != 0)
         unimplemented(fd);
@@ -250,29 +265,104 @@ void startServer()
 int main(int argc, const char *argv[])
 {
     signal(SIGINT, sigHandler);
+    signal(SIGCHLD, handle_subprocess_exit);
     startServer();
     printf("\nServer is now listening at port %d:\n\n", PORT);
 
+    int cpu_core_num = get_nprocs();
+    printf("cpu core num: %d\n", cpu_core_num);
+    // for (int i = 0; i < cpu_core_num * 2; i++)
+    for (int i = 0; i < cpu_core_num; i++)
+    {
+        pid_t pid = fork();
+        if (pid == 0)
+        {
+            process();
+        }
+    }
+
+    while (1)
+    {
+        sleep(1);
+    }
+
+    return EXIT_SUCCESS;
+}
+
+void process()
+{
+    char buf[128];
     struct sockaddr_in address;
     int addrLen = sizeof(address);
     int acceptedSocket;
+    int ready_fd_num;
 
     thrd_t thread;
     int *fdptr;
 
-    while (1)
+    int epoll_fd = epoll_create(MAX_EVENT_NUM);
+    struct epoll_event ev;
+    struct epoll_event events[MAX_EVENT_NUM];
+    ev.data.fd = serverFd;
+    ev.events = EPOLLIN;
+
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, serverFd, &ev) == -1)
     {
-        if ((acceptedSocket = accept(serverFd, (struct sockaddr *)&address, (socklen_t *)&addrLen)) < 0)
-        {
-            error_die("In accept");
-        }
-
-        fdptr = malloc(sizeof(int));
-        *fdptr = acceptedSocket;
-
-        thrd_create(&thread, process_request, fdptr);
-        thrd_detach(thread);
+        error_die("epoll_ctl error, message: ");
     }
 
-    return EXIT_SUCCESS;
+    while (1)
+    {
+        ready_fd_num = epoll_wait(epoll_fd, events, MAX_EVENT_NUM, INFTIM);
+        printf("[%d] Wake up, ready fd: %d \n", getpid(), ready_fd_num);
+        if (ready_fd_num == -1)
+        {
+            perror("epoll_wait error, message: ");
+            continue;
+        }
+
+        for (int i = 0; i < ready_fd_num; i++)
+        {
+            if (events[i].data.fd == serverFd)
+            {
+                if ((acceptedSocket = accept(serverFd, (struct sockaddr *)&address, (socklen_t *)&addrLen)) < 0)
+                {
+                    sprintf(buf, "[%d] In accept\n", getpid());
+                    perror(buf);
+                    continue;
+                }
+
+                if (fcntl(acceptedSocket, F_SETFL, fcntl(acceptedSocket, F_GETFD, 0) | O_NONBLOCK) == -1)
+                {
+                    printf("set nonblock faild \n");
+                    continue;
+                }
+
+                ev.data.fd = acceptedSocket;
+                ev.events = EPOLLIN;
+                if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, acceptedSocket, &ev) == -1)
+                {
+                    perror("epoll_ctl error, message: ");
+                    close(acceptedSocket);
+                }
+            }
+            else if (events[i].events & EPOLLIN)
+            {
+                printf("[%d] process request \n", getpid());
+                acceptedSocket = events[i].data.fd;
+                fdptr = malloc(sizeof(int));
+                *fdptr = acceptedSocket;
+
+                thrd_create(&thread, process_request, fdptr);
+                thrd_detach(thread);
+                // process_request(acceptedSocket);
+                // close(acceptedSocket);
+            }
+            else if (events[i].events & EPOLLERR)
+            {
+                perror("epoll error\n");
+                close(acceptedSocket);
+            }
+        }
+    }
 }
