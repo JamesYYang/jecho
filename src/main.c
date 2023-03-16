@@ -37,15 +37,14 @@ void header(FILE *fp, char *content_type);
 char *file_type(char *f);
 void serve_file(int client, char *filename);
 int process_request(void *fdptr);
-void startServer();
+// void process_request(int fd);
+int startServer();
 void process();
-
-int serverFd;
 
 void sigHandler(int signal)
 {
     printf("server closed: \n");
-    close(serverFd);
+    // close(serverFd);
     exit(EXIT_SUCCESS);
 }
 
@@ -199,6 +198,7 @@ void serve_file(int client, char *filename)
 }
 
 int process_request(void *fdptr)
+// void process_request(int fd)
 {
     int fd;
     fd = *(int *)fdptr;
@@ -233,13 +233,17 @@ int process_request(void *fdptr)
     return thrd_success;
 }
 
-void startServer()
+int startServer()
 {
-    // establish a socket.
+    int serverFd;
     if ((serverFd = socket(AF_INET, SOCK_STREAM, 0)) == 0)
     {
         error_die("In socket creation");
     }
+
+    // multiple process bind same port
+    int optval = 1;
+    setsockopt(serverFd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
 
     struct sockaddr_in address;
     int addrLen = sizeof(address);
@@ -260,18 +264,18 @@ void startServer()
     {
         error_die("In listen");
     }
+
+    printf("[%d] start server at %d and FD: %d \n", getpid(), PORT, serverFd);
+    return serverFd;
 }
 
 int main(int argc, const char *argv[])
 {
     signal(SIGINT, sigHandler);
     signal(SIGCHLD, handle_subprocess_exit);
-    startServer();
-    printf("\nServer is now listening at port %d:\n\n", PORT);
 
     int cpu_core_num = get_nprocs();
     printf("cpu core num: %d\n", cpu_core_num);
-    // for (int i = 0; i < cpu_core_num * 2; i++)
     for (int i = 0; i < cpu_core_num; i++)
     {
         pid_t pid = fork();
@@ -291,6 +295,8 @@ int main(int argc, const char *argv[])
 
 void process()
 {
+    int serverFd = startServer();
+
     char buf[128];
     struct sockaddr_in address;
     int addrLen = sizeof(address);
@@ -314,7 +320,6 @@ void process()
     while (1)
     {
         ready_fd_num = epoll_wait(epoll_fd, events, MAX_EVENT_NUM, INFTIM);
-        printf("[%d] Wake up, ready fd: %d \n", getpid(), ready_fd_num);
         if (ready_fd_num == -1)
         {
             perror("epoll_wait error, message: ");
@@ -350,13 +355,20 @@ void process()
             {
                 printf("[%d] process request \n", getpid());
                 acceptedSocket = events[i].data.fd;
+
+                ev.data.fd = acceptedSocket;
+
+                if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, acceptedSocket, &ev) == -1)
+                {
+                    perror("epoll_ctl delete error, message: ");
+                    close(acceptedSocket);
+                    continue;
+                }
+
                 fdptr = malloc(sizeof(int));
                 *fdptr = acceptedSocket;
-
                 thrd_create(&thread, process_request, fdptr);
                 thrd_detach(thread);
-                // process_request(acceptedSocket);
-                // close(acceptedSocket);
             }
             else if (events[i].events & EPOLLERR)
             {
