@@ -37,7 +37,6 @@ void header(FILE *fp, char *content_type);
 char *file_type(char *f);
 void serve_file(int client, char *filename);
 int process_request(void *fdptr);
-// void process_request(int fd);
 int startServer();
 void process();
 

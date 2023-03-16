@@ -10,3 +10,9 @@ make
 make run
 
 ```
+
+## Feature
+
+- multiple process
+- multiple thread per process
+- epoll 
