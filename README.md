@@ -16,3 +16,7 @@ make run
 - multiple process
 - multiple thread per process
 - epoll 
+
+## Reference
+
+- [Reactor vs Proactor](https://xiaolincoding.com/os/8_network_system/reactor.html)
